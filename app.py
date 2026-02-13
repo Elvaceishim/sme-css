@@ -56,39 +56,27 @@ if uploaded_file:
 
     st.divider()
     st.subheader("AI Underwriter's Credit Memo")
-    
-    # DEBUG PRINT 1
-    print("DEBUG: Reached the Memo Section Start")
 
+    memo = None
     with st.spinner("Writing detailed credit analysis..."):
         try:
             from memo_generator import generate_credit_memo
-            
-            # DEBUG PRINT 2
-            print(f"DEBUG: Calling AI with score: {score}")
-            
             memo = generate_credit_memo(score, "analyzed_transactions.csv")
-            
-            # DEBUG PRINT 3
-            print("DEBUG: AI successfully returned a memo")
-            
             st.info(memo)
-            
         except Exception as e:
             st.error(f"The Memo Generator failed: {e}")
-            print(f"DEBUG ERROR: {e}")
 
-    from report_gen import generate_pdf_report
+    if memo:
+        from report_gen import generate_pdf_report
+        pdf_path = generate_pdf_report(score, memo)
 
-    pdf_path = generate_pdf_report(score, memo)
-
-    with open(pdf_path, "rb") as f:
-        st.download_button(
-            label="Download PDF Report",
-            data=f,
-            file_name="SME_Credit_Report.pdf",
-            mime="application/pdf"
-        )
+        with open(pdf_path, "rb") as f:
+            st.download_button(
+                label="Download PDF Report",
+                data=f,
+                file_name="SME_Credit_Report.pdf",
+                mime="application/pdf"
+            )
 
 else:
     # This shows only when no file is uploaded

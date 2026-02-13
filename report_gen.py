@@ -11,12 +11,8 @@ class SMEReport(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
-    def add_font(self, font_name, font_style, font_path, uni=True):
-        self.add_font(font_name, font_style, font_path, uni=uni)
-        self.set_font(font_name, font_style)
-
 def generate_pdf_report(score, memo, output_path="SME_Report.pdf"):
-    clean_memo = memo.replace("₦", "NGN ").replace("—", "-").replace("’", "'")
+    clean_memo = memo.replace("₦", "NGN ").replace("—", "-").replace("\u2019", "'")
 
     pdf = SMEReport()
     pdf.add_page()
