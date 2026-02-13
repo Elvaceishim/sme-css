@@ -203,32 +203,41 @@ def _resolve_amount_columns(df):
     
     for _, row in df.iterrows():
         desc = row["description"].lower()
-        a1 = row.get("amount_1", 0)
-        a2 = row.get("amount_2", 0)
+        # Since regex skips '--' and empty fields, amount_1 is typically the Transaction Amount
+        # and amount_2 (if present) is the Balance.
+        val = row.get("amount_1", 0)
         
-        # Keyword inference
-        is_credit = any(x in desc for x in ["transfer from", "deposit", "credit", "inward"])
-        is_debit = any(x in desc for x in ["transfer to", "withdrawal", "debit", "outward", "purchase", "airtime", "data", "web purchase", "pos"])
+        # Keyword inference for TYPE
+        # Expanded list covering Nigerian bank patterns
+        credit_keywords = [
+            "transfer from", "deposit", "credit", "inward", "nip from", "trf from", 
+            "fip", "ut", "dividend", "interest", "refund", "reversal", "topup", 
+            "received", "fbn mobile", "uba mobile", "access mobile", "gtb mobile",
+            "zenith mobile", "firstmobile", "alat", "opay"
+        ]
         
-        val = 0
+        debit_keywords = [
+            "transfer to", "withdrawal", "debit", "outward", "purchase", "airtime", 
+            "data", "web purchase", "pos", "ussd", "nip to", "trf to", "payment",
+            "bill", "utility", "loan", "fee", "charge", "vat", "levy", "tax"
+        ]
+        
+        is_credit = any(k in desc for k in credit_keywords)
+        is_debit = any(k in desc for k in debit_keywords)
+        
+        # Conflict resolution / Defaulting
         if is_credit:
-            # Look for the largest amount that isn't the balance (if possible)
-            # Heuristic: usually trans amount < balance.
-            val = max(a1, a2)
-            if "amount_3" in df.columns and row["amount_3"] > 0:
-                 # If 3 amounts exist, one is likely balance. 
-                 # We still take the max of the first two? Or just the first?
-                 # Safest: take the one that isn't the running balance.
-                 # Actually, usually Debit | Credit | Balance
-                 # Since it's credit, we expect Debit=0.
-                 pass
+            final = abs(val)
         elif is_debit:
-             val = -max(a1, a2)
+            final = -abs(val)
         else:
-             # Fallback: Assume debit (safer for risk analysis)
-             val = -a1
+            # Ambiguous. 
+            # If description matches "Transfer from X to Y", it mentions both.
+            # But usually "Transfer from" comes first for credits.
+            # Default to Negative (Expense) is safer for risk scoring than assuming Income.
+            final = -abs(val)
              
-        final_amounts.append(val)
+        final_amounts.append(final)
 
     df["amount"] = final_amounts
     df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
