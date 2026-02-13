@@ -11,6 +11,7 @@ class SMEReport(FPDF):
         self.set_font('Arial', 'I', 8)
         self.cell(0, 10, f'Page {self.page_no()}', 0, 0, 'C')
 
+def generate_pdf_report(score, memo, output_path="SME_Report.pdf"):
     # Clean up the markdown text for the PDF
     # Convert asterisks to nothing, handle headers, etc.
     final_memo = clean_markdown(memo)
