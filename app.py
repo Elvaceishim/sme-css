@@ -9,7 +9,7 @@ from pdf_extractor import extract_transactions_from_pdf
 
 # Page Configuration
 st.set_page_config(page_title="SME Credit Scorer", layout="wide")
-st.title("🇳🇬 SME AI Credit Scoring Dashboard")
+st.title("SME AI Credit Scoring Dashboard")
 
 # 1. Sidebar for Uploads
 st.sidebar.header("Upload Data")
@@ -45,7 +45,7 @@ if uploaded_file:
         st.warning(w)
 
     # ── Statement Overview ──
-    st.subheader("📋 Statement Overview")
+    st.subheader("Statement Overview")
     overview_cols = st.columns(4)
     with overview_cols[0]:
         st.metric("Transactions", summary.get("total_transactions", 0))
@@ -158,7 +158,7 @@ if uploaded_file:
 else:
     st.info("Please upload a CSV or PDF bank statement to begin the credit assessment.")
     
-    with st.expander("📌 What formats are supported?"):
+    with st.expander("What formats are supported?"):
         st.markdown("""
         ### CSV Files
         Your CSV should contain transaction data with columns like:
