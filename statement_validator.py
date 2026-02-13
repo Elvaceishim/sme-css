@@ -63,6 +63,14 @@ DATE_FORMATS = [
 MIN_MONTHS = 3
 
 
+def _parse_numeric_column(series):
+    """Parse a column of potentially comma-formatted amounts like '9,850.00' into floats."""
+    return pd.to_numeric(
+        series.astype(str).str.replace(",", "", regex=False).str.strip(),
+        errors="coerce"
+    ).fillna(0)
+
+
 def _normalize_columns(df):
     """Map bank-specific column names to our standard schema."""
     import re
@@ -86,8 +94,8 @@ def _normalize_columns(df):
     
     # Handle split credit/debit columns → single amount column
     if "_credit" in df.columns and "_debit" in df.columns:
-        df["_credit"] = pd.to_numeric(df["_credit"], errors="coerce").fillna(0)
-        df["_debit"] = pd.to_numeric(df["_debit"], errors="coerce").fillna(0)
+        df["_credit"] = _parse_numeric_column(df["_credit"])
+        df["_debit"] = _parse_numeric_column(df["_debit"])
         df["amount"] = df["_credit"] - df["_debit"]
         df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
         df = df.drop(columns=["_credit", "_debit"])
@@ -140,9 +148,17 @@ def validate_statement(df):
     if date_format is None:
         warnings.append("Could not parse dates. Please ensure a 'date' column with a recognizable format.")
     
-    # 3. Clean amount column
-    df["amount"] = pd.to_numeric(df["amount"], errors="coerce")
-    df = df.dropna(subset=["amount"])
+    # 2b. Drop rows where date could not be parsed (shows as 'None')
+    if pd.api.types.is_datetime64_any_dtype(df["date"]):
+        before_count = len(df)
+        df = df.dropna(subset=["date"])
+        dropped = before_count - len(df)
+        if dropped > 0:
+            warnings.append(f"Dropped {dropped} rows with unparseable dates.")
+    
+    # 3. Clean amount column (handle commas like 9,850.00)
+    df["amount"] = _parse_numeric_column(df["amount"])
+    df = df[df["amount"] != 0]  # Drop zero-amount rows
     
     # 4. Infer type if missing
     if "type" not in df.columns:
