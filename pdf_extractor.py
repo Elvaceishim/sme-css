@@ -67,8 +67,27 @@ def _extract_from_tables(pdf):
     if not all_rows:
         return None
     
+    # Determine target width and normalize all rows to that width
+    if header:
+        target_width = len(header)
+    else:
+        # Use the most common row length
+        from collections import Counter
+        widths = Counter(len(r) for r in all_rows)
+        target_width = widths.most_common(1)[0][0]
+    
+    def _normalize_row(row, width):
+        if len(row) < width:
+            return row + [""] * (width - len(row))
+        elif len(row) > width:
+            return row[:width]
+        return row
+    
+    all_rows = [_normalize_row(r, target_width) for r in all_rows]
+    
     # Build DataFrame
-    if header and len(header) == len(all_rows[0]):
+    if header:
+        header = _normalize_row(header, target_width)
         df = pd.DataFrame(all_rows, columns=header)
     else:
         df = pd.DataFrame(all_rows)
