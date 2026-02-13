@@ -55,7 +55,7 @@ class TransactionProcessor:
                 row["reason"] = "AI processing failed"
             return fallback
 
-    def run_pipeline(self, input_csv, output_csv, batch_size=50):
+    def run_pipeline(self, input_csv, output_csv, batch_size=100):
         """Process CSV in batches with larger batch size for speed."""
         df = pd.read_csv(input_csv)
         total_rows = len(df)
