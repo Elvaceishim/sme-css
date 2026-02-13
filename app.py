@@ -5,6 +5,7 @@ import plotly.express as px
 from transaction_processor import TransactionProcessor
 from scorer import CreditScorer
 from statement_validator import validate_statement, get_monthly_trends
+from pdf_extractor import extract_transactions_from_pdf
 
 # Page Configuration
 st.set_page_config(page_title="SME Credit Scorer", layout="wide")
@@ -13,14 +14,25 @@ st.title("🇳🇬 SME AI Credit Scoring Dashboard")
 # 1. Sidebar for Uploads
 st.sidebar.header("Upload Data")
 st.sidebar.markdown(
-    "Upload an SME bank statement in CSV format.\n\n"
+    "Upload an SME bank statement in **CSV** or **PDF** format.\n\n"
     "**Minimum 3 months** of transaction history is recommended for accurate scoring."
 )
-uploaded_file = st.sidebar.file_uploader("Upload Bank Statement (CSV)", type="csv")
+uploaded_file = st.sidebar.file_uploader("Upload Bank Statement (CSV or PDF)", type=["csv", "pdf"])
 
 if uploaded_file:
-    # Load and validate the statement
-    raw_df = pd.read_csv(uploaded_file)
+    # Determine file type and load accordingly
+    file_name = uploaded_file.name.lower()
+    
+    if file_name.endswith(".pdf"):
+        with st.spinner("Extracting transactions from PDF..."):
+            raw_df, method = extract_transactions_from_pdf(uploaded_file)
+            if raw_df is None:
+                st.error(method)  # method contains the error message
+                st.stop()
+            st.success(f"Extracted {len(raw_df)} rows from PDF (method: {method})")
+    else:
+        raw_df = pd.read_csv(uploaded_file)
+    
     cleaned_df, summary, warnings = validate_statement(raw_df)
 
     if cleaned_df is None:
@@ -137,17 +149,18 @@ if uploaded_file:
 
         with open(pdf_path, "rb") as f:
             st.download_button(
-                label="📥 Download PDF Report",
+                label="Download PDF Report",
                 data=f,
                 file_name="SME_Credit_Report.pdf",
                 mime="application/pdf"
             )
 
 else:
-    st.info("Please upload a CSV bank statement to begin the credit assessment.")
+    st.info("Please upload a CSV or PDF bank statement to begin the credit assessment.")
     
-    with st.expander("📌 What format should my CSV be in?"):
+    with st.expander("📌 What formats are supported?"):
         st.markdown("""
+        ### CSV Files
         Your CSV should contain transaction data with columns like:
         
         | Column | Description |
@@ -163,4 +176,9 @@ else:
         |--------|-------------|----------|---------|
         
         Most Nigerian bank CSV exports are supported automatically.
+        
+        ### PDF Files
+        Upload your bank statement PDF directly — the system will attempt to 
+        extract transaction tables automatically. Works best with digitally 
+        generated PDFs (not scanned images).
         """)
