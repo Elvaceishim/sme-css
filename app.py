@@ -40,6 +40,12 @@ if uploaded_file:
             st.error(w)
         st.stop()
 
+    # Show extraction stats
+    raw_count = len(raw_df)
+    clean_count = len(cleaned_df)
+    if raw_count != clean_count:
+        st.info(f"Validated **{clean_count}** transactions out of {raw_count} extracted rows.")
+
     # Show warnings (e.g., < 3 months)
     for w in warnings:
         st.warning(w)

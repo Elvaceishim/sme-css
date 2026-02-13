@@ -64,11 +64,25 @@ MIN_MONTHS = 3
 
 
 def _parse_numeric_column(series):
-    """Parse a column of potentially comma-formatted amounts like '9,850.00' into floats."""
-    return pd.to_numeric(
-        series.astype(str).str.replace(",", "", regex=False).str.strip(),
-        errors="coerce"
-    ).fillna(0)
+    """Parse a column with amounts like '₦9,850.00', '9,850.00', '--', etc."""
+    import re
+    def _clean_amount(val):
+        val = str(val).strip()
+        # Remove currency symbols and letters
+        val = re.sub(r'[₦$NGN]', '', val, flags=re.IGNORECASE)
+        # Remove commas
+        val = val.replace(',', '')
+        # Handle dashes ("--" or "-" meaning zero/empty)
+        val = val.strip()
+        if val in ('', '-', '--', '---', 'None', 'nan', 'N/A', 'nil'):
+            return 0.0
+        try:
+            return float(val)
+        except (ValueError, TypeError):
+            return None  # Truly unparseable
+    
+    result = series.apply(_clean_amount)
+    return pd.to_numeric(result, errors='coerce').fillna(0)
 
 
 def _normalize_columns(df):
@@ -156,9 +170,10 @@ def validate_statement(df):
         if dropped > 0:
             warnings.append(f"Dropped {dropped} rows with unparseable dates.")
     
-    # 3. Clean amount column (handle commas like 9,850.00)
+    # 3. Clean amount column (handle commas, currency symbols, dashes)
     df["amount"] = _parse_numeric_column(df["amount"])
-    df = df[df["amount"] != 0]  # Drop zero-amount rows
+    # Only drop rows where amount is completely empty/unparseable, NOT where it's genuinely 0
+    df = df.dropna(subset=["amount"])
     
     # 4. Infer type if missing
     if "type" not in df.columns:
