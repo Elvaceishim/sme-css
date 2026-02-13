@@ -14,26 +14,41 @@ def extract_transactions_from_pdf(pdf_file):
     except Exception as e:
         return None, f"Could not open PDF: {e}"
     
+    # Helper to count valid dates
+    import re
+    date_pat = r'(?:\d{2}[-/]\d{2}[-/]\d{4}|\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{4})'
+    
+    def count_valid_dates(df):
+        if df is None or len(df) == 0 or "date" not in df.columns:
+            return 0
+        # Count rows where 'date' column matches the date pattern
+        valid_mask = df["date"].astype(str).str.contains(date_pat, regex=True, case=False, na=False)
+        return valid_mask.sum()
+
     # Strategy 1: Table extraction
     df_tables = _extract_from_tables(pdf)
     df_tables_clean = _clean_extracted_df(df_tables) if df_tables is not None else None
-    count_tables = len(df_tables_clean) if df_tables_clean is not None else 0
+    score_tables = count_valid_dates(df_tables_clean)
     
     # Strategy 2: Text-based extraction (Regex)
     df_text = _extract_from_text(pdf)
     df_text_clean = _clean_extracted_df(df_text) if df_text is not None else None
-    count_text = len(df_text_clean) if df_text_clean is not None else 0
+    score_text = count_valid_dates(df_text_clean)
     
-    # Choose the winner
+    # Choose the winner based on VALID dates, not just total rows
     pdf.close()
     
-    if count_tables == 0 and count_text == 0:
+    if score_tables == 0 and score_text == 0:
+        # Fallback: if neither produced valid dates, return the one with rows?
+        # Or just fail.
+        if df_tables_clean is not None and len(df_tables_clean) > 0:
+             return df_tables_clean, f"table_extraction (fallback, {len(df_tables_clean)} rows)"
         return None, "Could not extract any valid transactions. Please try CSV export."
         
-    if count_text > count_tables:
-        return df_text_clean, f"text_extraction ({count_text} rows)"
+    if score_text >= score_tables:  # Prefer text if tie or better
+        return df_text_clean, f"text_extraction ({score_text} valid rows)"
     else:
-        return df_tables_clean, f"table_extraction ({count_tables} rows)"
+        return df_tables_clean, f"table_extraction ({score_tables} valid rows)"
 
 
 def _extract_from_tables(pdf):
