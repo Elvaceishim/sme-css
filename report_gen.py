@@ -60,13 +60,31 @@ def clean_markdown(text):
     text = re.sub(r'^(#+)\s+(.*)$', upper_header, text, flags=re.MULTILINE)
     
     # Handle Lists
-    # Replace "* " or "- " at start of line with bullet character
-    text = re.sub(r'^[\*\-]\s+', '• ', text, flags=re.MULTILINE)
+    # Replace "* " or "- " at start of line with a hyphen (bullets are not supported in latin-1)
+    text = re.sub(r'^[\*\-]\s+', '- ', text, flags=re.MULTILINE)
     
-    # Clean up specialized chars
-    text = text.replace("₦", "NGN ")
-    text = text.replace("—", "-")
-    text = text.replace("\u2019", "'")
+    # Clean up specialized chars - normalize to simple ASCII
+    replacements = {
+        "₦": "NGN ",
+        "—": "-",    # em-dash
+        "–": "-",    # en-dash
+        "’": "'",    # right single quote
+        "‘": "'",    # left single quote
+        "“": '"',    # left double quote
+        "”": '"',    # right double quote
+        "…": "...",  # ellipsis
+        "•": "-",    # bullet (U+2022) -> hyphen
+        "\u2013": "-", # en-dash alternate
+        "\u2014": "-", # em-dash alternate
+        "\u2018": "'", 
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u00a0": " ", # non-breaking space
+    }
+    
+    for char, replacement in replacements.items():
+        text = text.replace(char, replacement)
     
     # Remove multiple newlines
     text = re.sub(r'\n{3,}', '\n\n', text)
