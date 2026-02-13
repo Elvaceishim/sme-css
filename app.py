@@ -33,9 +33,6 @@ if uploaded_file:
     else:
         raw_df = pd.read_csv(uploaded_file)
     
-    # DEBUG: Show raw data to check column alignment
-    st.write("DEBUG: Raw Extracted Data (First 5 rows)", raw_df.head(5))
-
     cleaned_df, summary, warnings = validate_statement(raw_df)
 
     if cleaned_df is None:

@@ -137,14 +137,6 @@ def _parse_dates(df, warnings_list=None):
     # Fallback: let pandas infer
     try:
         df["date"] = pd.to_datetime(df["date"], dayfirst=True, errors="coerce")
-        
-        # Debug: log sample bad dates if we have warnings list
-        if warnings_list is not None:
-            failed_mask = df["date"].isna()
-            if failed_mask.any():
-                bad_samples = original_dates[failed_mask].unique()[:10]
-                warnings_list.append(f"DEBUG: Sample unparseable dates: {', '.join(map(str, bad_samples))}")
-        
         return df, "inferred"
     except Exception:
         return df, None
@@ -180,9 +172,6 @@ def validate_statement(df):
         dropped = before_count - len(df)
         if dropped > 0:
             warnings.append(f"Dropped {dropped} rows with unparseable dates.")
-            # DEBUG: Show what the bad dates look like
-            bad_dates = df[df["date"].isna()]["date"].astype(str).unique()[:20]
-            warnings.append(f"Sample bad dates: {', '.join(bad_dates)}")
     
     # 3. Clean amount column (handle commas, currency symbols, dashes)
     df["amount"] = _parse_numeric_column(df["amount"])

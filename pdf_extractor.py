@@ -7,15 +7,7 @@ def extract_transactions_from_pdf(pdf_file):
     """
     Extract transaction data from a bank statement PDF.
     
-    Tries two strategies:
-    1. Table extraction — uses pdfplumber's built-in table detection
-    2. Text extraction — falls back to parsing raw text line by line
-    
-    Args:
-        pdf_file: A file-like object (e.g., from st.file_uploader)
-    
-    Returns:
-        tuple: (DataFrame, extraction_method) or (None, error_message)
+    Tries both Table and Text strategies and picks the one with more valid rows.
     """
     try:
         pdf = pdfplumber.open(pdf_file)
@@ -23,23 +15,25 @@ def extract_transactions_from_pdf(pdf_file):
         return None, f"Could not open PDF: {e}"
     
     # Strategy 1: Table extraction
-    df = _extract_from_tables(pdf)
-    if df is not None and len(df) > 0:
-        df = _clean_extracted_df(df)
-        if df is not None and len(df) > 0:
-            pdf.close()
-            return df, "table_extraction"
+    df_tables = _extract_from_tables(pdf)
+    df_tables_clean = _clean_extracted_df(df_tables) if df_tables is not None else None
+    count_tables = len(df_tables_clean) if df_tables_clean is not None else 0
     
-    # Strategy 2: Text-based extraction
-    df = _extract_from_text(pdf)
-    if df is not None and len(df) > 0:
-        df = _clean_extracted_df(df)
-        if df is not None and len(df) > 0:
-            pdf.close()
-            return df, "text_extraction"
+    # Strategy 2: Text-based extraction (Regex)
+    df_text = _extract_from_text(pdf)
+    df_text_clean = _clean_extracted_df(df_text) if df_text is not None else None
+    count_text = len(df_text_clean) if df_text_clean is not None else 0
     
+    # Choose the winner
     pdf.close()
-    return None, "Could not extract transaction data from this PDF. Please try exporting as CSV from your online banking portal."
+    
+    if count_tables == 0 and count_text == 0:
+        return None, "Could not extract any valid transactions. Please try CSV export."
+        
+    if count_text > count_tables:
+        return df_text_clean, f"text_extraction ({count_text} rows)"
+    else:
+        return df_tables_clean, f"table_extraction ({count_tables} rows)"
 
 
 def _extract_from_tables(pdf):
@@ -109,21 +103,18 @@ def _extract_from_tables(pdf):
 
 def _extract_from_text(pdf):
     """
-    Fallback: extract transactions by parsing raw text.
-    Looks for lines that start with a date pattern.
+    Robust regex-based extraction to handle merged columns.
+    Finds lines with: [Date] ... [Amount] or [Description] ... [Date] ... [Amount]
     """
     import re
     
-    date_patterns = [
-        r'\d{2}/\d{2}/\d{4}',   # DD/MM/YYYY
-        r'\d{2}-\d{2}-\d{4}',   # DD-MM-YYYY
-        r'\d{4}-\d{2}-\d{2}',   # YYYY-MM-DD
-        r'\d{2}\s\w{3}\s\d{4}', # DD MMM YYYY
-        r'\d{2}-\w{3}-\d{4}',   # DD-MMM-YYYY
-    ]
-    combined_pattern = "|".join(f"({p})" for p in date_patterns)
+    # Regex patterns
+    # Match dates like 15 Nov 2025, 15-11-2025, 15/11/2025
+    date_pat = r'(?:\d{2}[-/]\d{2}[-/]\d{4}|\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{4})'
+    amount_pat = r'[\d,]+\.\d{2}'
     
     rows = []
+    
     for page in pdf.pages:
         text = page.extract_text()
         if not text:
@@ -134,66 +125,101 @@ def _extract_from_text(pdf):
             if not line:
                 continue
             
-            # Check if line starts with a date
-            match = re.match(combined_pattern, line)
-            if match:
-                date = match.group(0)
-                rest = line[match.end():].strip()
+            # fast check: must have at least one digit
+            if not any(c.isdigit() for c in line):
+                continue
+
+            # Find all dates in the line
+            dates = re.findall(date_pat, line, re.IGNORECASE)
+            # Find all amounts in the line
+            amounts = re.findall(amount_pat, line)
+            
+            if dates and amounts:
+                # It's a candidate transaction line!
+                primary_date = dates[0]
                 
-                # Try to extract amounts (numbers with commas/decimals)
-                amounts = re.findall(r'[\d,]+\.\d{2}', rest)
+                # Extract Description by removing dates and amounts
+                desc = line
+                for d in dates:
+                    desc = desc.replace(d, " ")
+                for a in amounts:
+                    desc = desc.replace(a, " ")
                 
-                # Remove amounts from description
-                description = rest
-                for amt in amounts:
-                    description = description.replace(amt, "").strip()
-                description = re.sub(r'\s+', ' ', description).strip(" -|")
+                # Clean up description
+                # Remove vertical bars and extra spaces
+                desc = re.sub(r'[^a-zA-Z0-9\s.,-]', '', desc) 
+                desc = re.sub(r'\s+', ' ', desc).strip()
                 
-                if amounts:
-                    rows.append({
-                        "date": date,
-                        "description": description,
-                        "amount_1": amounts[0] if len(amounts) > 0 else "",
-                        "amount_2": amounts[1] if len(amounts) > 1 else "",
-                        "amount_3": amounts[2] if len(amounts) > 2 else "",
-                    })
+                # Skip if description is too short or looks like a header
+                if len(desc) < 3 or "Opening Balance" in desc:
+                    continue
+
+                row = {
+                    "date": primary_date,
+                    "description": desc,
+                    "amount_1": amounts[0] if len(amounts) > 0 else 0,
+                    "amount_2": amounts[1] if len(amounts) > 1 else 0,
+                    "amount_3": amounts[2] if len(amounts) > 2 else 0,
+                }
+                rows.append(row)
     
     if not rows:
         return None
-    
+        
     df = pd.DataFrame(rows)
-    
-    # Try to figure out which amount columns are debit/credit/balance
-    df = _resolve_amount_columns(df)
-    
-    return df
+    return _resolve_amount_columns(df)
 
 
 def _resolve_amount_columns(df):
     """Convert extracted amount columns into a single signed amount."""
-    amount_cols = [c for c in df.columns if c.startswith("amount_")]
+    # Convert string amounts to floats
+    def parse(x):
+        try:
+            return float(str(x).replace(",", ""))
+        except:
+            return 0.0
+
+    for col in ["amount_1", "amount_2", "amount_3"]:
+        if col in df.columns:
+            df[col] = df[col].apply(parse)
     
-    for col in amount_cols:
-        df[col] = df[col].apply(lambda x: _parse_amount(x) if x else 0)
+    # Infer credit/debit based on keywords + amounts
+    final_amounts = []
     
-    if "amount_1" in df.columns and "amount_2" in df.columns and "amount_3" in df.columns:
-        # Pattern: debit, credit, balance (common in Nigerian bank statements)
-        df["amount"] = df.apply(
-            lambda r: r["amount_2"] if r["amount_2"] > 0 else -r["amount_1"], axis=1
-        )
-        df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
-        df = df.drop(columns=amount_cols)
-    elif "amount_1" in df.columns and "amount_2" in df.columns:
-        # Pattern: debit, credit OR amount, balance
-        df["amount"] = df.apply(
-            lambda r: r["amount_2"] if r["amount_2"] > 0 else -r["amount_1"], axis=1
-        )
-        df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
-        df = df.drop(columns=amount_cols)
-    elif "amount_1" in df.columns:
-        df = df.rename(columns={"amount_1": "amount"})
-        df = df.drop(columns=[c for c in amount_cols if c != "amount_1"], errors="ignore")
+    for _, row in df.iterrows():
+        desc = row["description"].lower()
+        a1 = row.get("amount_1", 0)
+        a2 = row.get("amount_2", 0)
+        
+        # Keyword inference
+        is_credit = any(x in desc for x in ["transfer from", "deposit", "credit", "inward"])
+        is_debit = any(x in desc for x in ["transfer to", "withdrawal", "debit", "outward", "purchase", "airtime", "data", "web purchase", "pos"])
+        
+        val = 0
+        if is_credit:
+            # Look for the largest amount that isn't the balance (if possible)
+            # Heuristic: usually trans amount < balance.
+            val = max(a1, a2)
+            if "amount_3" in df.columns and row["amount_3"] > 0:
+                 # If 3 amounts exist, one is likely balance. 
+                 # We still take the max of the first two? Or just the first?
+                 # Safest: take the one that isn't the running balance.
+                 # Actually, usually Debit | Credit | Balance
+                 # Since it's credit, we expect Debit=0.
+                 pass
+        elif is_debit:
+             val = -max(a1, a2)
+        else:
+             # Fallback: Assume debit (safer for risk analysis)
+             val = -a1
+             
+        final_amounts.append(val)
+
+    df["amount"] = final_amounts
+    df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
     
+    # Drop temp cols
+    df = df.drop(columns=[c for c in df.columns if c.startswith("amount_")], errors="ignore")
     return df
 
 
