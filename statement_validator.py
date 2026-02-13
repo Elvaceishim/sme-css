@@ -29,9 +29,17 @@ COLUMN_MAPPINGS = {
     "credit": "_credit",
     "credit amount": "_credit",
     "deposits": "_credit",
+    "deposit": "_credit",
+    "credit(₦)": "_credit",
+    "credit (₦)": "_credit",
+    "credit(ngn)": "_credit",
     "debit": "_debit",
     "debit amount": "_debit",
     "withdrawals": "_debit",
+    "withdrawal": "_debit",
+    "debit(₦)": "_debit",
+    "debit (₦)": "_debit",
+    "debit(ngn)": "_debit",
     
     # Type columns
     "type": "type",
@@ -57,11 +65,20 @@ MIN_MONTHS = 3
 
 def _normalize_columns(df):
     """Map bank-specific column names to our standard schema."""
+    import re
     df.columns = [col.strip().lower() for col in df.columns]
     
     rename_map = {}
     for original_col in df.columns:
+        # Direct match first
         mapped = COLUMN_MAPPINGS.get(original_col)
+        if mapped:
+            rename_map[original_col] = mapped
+            continue
+        
+        # Fuzzy match: strip parenthesized content like (₦) or (NGN)
+        stripped = re.sub(r'\s*\(.*?\)\s*', '', original_col).strip()
+        mapped = COLUMN_MAPPINGS.get(stripped)
         if mapped:
             rename_map[original_col] = mapped
     
