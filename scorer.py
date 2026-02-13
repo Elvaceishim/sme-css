@@ -2,8 +2,12 @@ import pandas as pd
 import numpy as np
 
 class CreditScorer:
-    def __init__(self, filepath):
-        self.df = pd.read_csv(filepath)
+    def __init__(self, data):
+        """Accept a DataFrame or a filepath string."""
+        if isinstance(data, pd.DataFrame):
+            self.df = data.copy()
+        else:
+            self.df = pd.read_csv(data)
         # Parse dates if available
         if "date" in self.df.columns:
             self.df["date"] = pd.to_datetime(self.df["date"], errors="coerce")

@@ -25,14 +25,18 @@ def extract_transactions_from_pdf(pdf_file):
     # Strategy 1: Table extraction
     df = _extract_from_tables(pdf)
     if df is not None and len(df) > 0:
-        pdf.close()
-        return df, "table_extraction"
+        df = _clean_extracted_df(df)
+        if df is not None and len(df) > 0:
+            pdf.close()
+            return df, "table_extraction"
     
     # Strategy 2: Text-based extraction
     df = _extract_from_text(pdf)
     if df is not None and len(df) > 0:
-        pdf.close()
-        return df, "text_extraction"
+        df = _clean_extracted_df(df)
+        if df is not None and len(df) > 0:
+            pdf.close()
+            return df, "text_extraction"
     
     pdf.close()
     return None, "Could not extract transaction data from this PDF. Please try exporting as CSV from your online banking portal."
@@ -220,3 +224,41 @@ def _is_header_row(row):
     row_text = " ".join(str(cell).lower() for cell in row)
     matches = sum(1 for kw in header_keywords if kw in row_text)
     return matches >= 2
+
+
+def _clean_extracted_df(df):
+    """
+    Post-process extracted DataFrame to remove junk rows.
+    - Drops rows with empty/null dates
+    - Removes header artifact rows
+    - Strips whitespace from text columns
+    """
+    import re
+    
+    # Normalize column names
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    
+    # Drop rows where date is empty/null
+    if "date" in df.columns:
+        df = df[df["date"].astype(str).str.strip().ne("")]
+        df = df[df["date"].astype(str).str.strip().ne("nan")]
+        df = df[df["date"].astype(str).str.strip().ne("None")]
+    
+    # Drop rows that look like repeated headers
+    junk_patterns = [
+        r'^(date|description|narration|trans\.?\s*time|channel|balance|s/n|no\.)$',
+    ]
+    if "description" in df.columns:
+        for pat in junk_patterns:
+            mask = df["description"].astype(str).str.strip().str.match(pat, case=False, na=False)
+            df = df[~mask]
+    
+    # Strip whitespace from all string columns
+    for col in df.select_dtypes(include="object").columns:
+        df[col] = df[col].astype(str).str.strip()
+        df[col] = df[col].apply(lambda x: re.sub(r'\s+', ' ', x))
+    
+    # Drop fully empty rows
+    df = df.replace("", pd.NA).dropna(how="all").fillna("")
+    
+    return df.reset_index(drop=True) if len(df) > 0 else None

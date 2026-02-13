@@ -2,10 +2,10 @@ import streamlit as st
 import pandas as pd
 import plotly.graph_objects as go
 import plotly.express as px
-from transaction_processor import TransactionProcessor
 from scorer import CreditScorer
 from statement_validator import validate_statement, get_monthly_trends
 from pdf_extractor import extract_transactions_from_pdf
+from categorizer import categorize_transactions
 
 # Page Configuration
 st.set_page_config(page_title="SME Credit Scorer", layout="wide")
@@ -60,7 +60,7 @@ if uploaded_file:
     # ── Monthly Trends Chart ──
     monthly_trends = get_monthly_trends(cleaned_df)
     if not monthly_trends.empty:
-        st.subheader("📊 Monthly Trends")
+        st.subheader("Monthly Trends")
         fig_trends = go.Figure()
         fig_trends.add_trace(go.Bar(
             x=monthly_trends["month"], y=monthly_trends["income"],
@@ -82,17 +82,13 @@ if uploaded_file:
 
     st.divider()
 
-    # Save cleaned data for the AI pipeline
-    cleaned_df.to_csv("temp_transactions.csv", index=False)
+    # ── Categorize transactions (instant, rule-based) ──
+    categorized_df = categorize_transactions(cleaned_df)
 
-    # ── AI Processing ──
-    with st.spinner("AI is analyzing transactions..."):
-        processor = TransactionProcessor()
-        processor.run_pipeline("temp_transactions.csv", "analyzed_transactions.csv")
-        
-        scorer = CreditScorer("analyzed_transactions.csv")
-        score = scorer.generate_score()
-        metrics = scorer.calculate_metrics()
+    # ── Score ──
+    scorer = CreditScorer(categorized_df)
+    score = scorer.generate_score()
+    metrics = scorer.calculate_metrics()
 
     # ── Results Row ──
     col1, col2 = st.columns([1, 2])
@@ -127,12 +123,14 @@ if uploaded_file:
 
     with col2:
         st.subheader("Transaction Breakdown")
-        df = pd.read_csv("analyzed_transactions.csv")
-        display_cols = [c for c in ['date', 'description', 'category', 'amount', 'reason'] if c in df.columns]
-        st.dataframe(df[display_cols], use_container_width=True, height=400)
+        display_cols = [c for c in ['date', 'description', 'category', 'amount', 'reason'] if c in categorized_df.columns]
+        st.dataframe(categorized_df[display_cols], use_container_width=True, height=400)
 
     st.divider()
     st.subheader("AI Underwriter's Credit Memo")
+
+    # Save categorized data for memo generator
+    categorized_df.to_csv("analyzed_transactions.csv", index=False, quoting=1)
 
     memo = None
     with st.spinner("Writing detailed credit analysis..."):
