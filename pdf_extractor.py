@@ -126,7 +126,9 @@ def _extract_from_text(pdf):
     # Regex patterns
     # Match dates like 15 Nov 2025, 15-11-2025, 15/11/2025
     date_pat = r'(?:\d{2}[-/]\d{2}[-/]\d{4}|\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{4})'
-    amount_pat = r'[\d,]+\.\d{2}'
+    # Match amounts OR placeholders (-- or -). 
+    # capturing group for the amount itself to distinguish from placeholder
+    amount_pat = r'(?:[\d,]+\.\d{2}|--|(?<=\s)-(?=\s))'
     
     rows = []
     
@@ -146,10 +148,13 @@ def _extract_from_text(pdf):
 
             # Find all dates in the line
             dates = re.findall(date_pat, line, re.IGNORECASE)
-            # Find all amounts in the line
+            # Find all amounts/placeholders in the line
             amounts = re.findall(amount_pat, line)
             
-            if dates and amounts:
+            # Filter matches that are just isolated hyphens if they aren't likely columns
+            # (Valid placeholders usually appear after the date)
+            
+            if dates and len(amounts) >= 2:
                 # It's a candidate transaction line!
                 primary_date = dates[0]
                 
@@ -161,7 +166,6 @@ def _extract_from_text(pdf):
                     desc = desc.replace(a, " ")
                 
                 # Clean up description
-                # Remove vertical bars and extra spaces
                 desc = re.sub(r'[^a-zA-Z0-9\s.,-]', '', desc) 
                 desc = re.sub(r'\s+', ' ', desc).strip()
                 
@@ -169,12 +173,13 @@ def _extract_from_text(pdf):
                 if len(desc) < 3 or "Opening Balance" in desc:
                     continue
 
+                # Store raw string values (including placeholders)
                 row = {
                     "date": primary_date,
                     "description": desc,
-                    "amount_1": amounts[0] if len(amounts) > 0 else 0,
-                    "amount_2": amounts[1] if len(amounts) > 1 else 0,
-                    "amount_3": amounts[2] if len(amounts) > 2 else 0,
+                    "amount_1": amounts[0],
+                    "amount_2": amounts[1],
+                    "amount_3": amounts[2] if len(amounts) > 2 else "",
                 }
                 rows.append(row)
     
@@ -186,58 +191,52 @@ def _extract_from_text(pdf):
 
 
 def _resolve_amount_columns(df):
-    """Convert extracted amount columns into a single signed amount."""
-    # Convert string amounts to floats
+    """Convert extracted amount columns into a single signed amount using Positional Logic."""
+    # Helper to parse "2,000.00" -> 2000.0, "--" -> 0.0
     def parse(x):
+        x = str(x).strip()
+        if x in ["--", "-", ""]:
+            return 0.0
         try:
-            return float(str(x).replace(",", ""))
+            return float(x.replace(",", ""))
         except:
             return 0.0
 
+    # Parse all amount columns
     for col in ["amount_1", "amount_2", "amount_3"]:
         if col in df.columns:
-            df[col] = df[col].apply(parse)
+            df[col + "_val"] = df[col].apply(parse)
     
-    # Infer credit/debit based on keywords + amounts
+    # Infer credit/debit based on POSITION (Debit | Credit | Balance)
     final_amounts = []
     
     for _, row in df.iterrows():
-        desc = row["description"].lower()
-        # Since regex skips '--' and empty fields, amount_1 is typically the Transaction Amount
-        # and amount_2 (if present) is the Balance.
-        val = row.get("amount_1", 0)
+        a1 = row.get("amount_1_val", 0)
+        a2 = row.get("amount_2_val", 0)
         
-        # Keyword inference for TYPE
-        # Expanded list covering Nigerian bank patterns
-        credit_keywords = [
-            "transfer from", "deposit", "credit", "inward", "nip from", "trf from", 
-            "fip", "ut", "dividend", "interest", "refund", "reversal", "topup", 
-            "received", "fbn mobile", "uba mobile", "access mobile", "gtb mobile",
-            "zenith mobile", "firstmobile", "alat", "opay"
-        ]
+        # Logic: 
+        # Col 1 (a1) = Debit
+        # Col 2 (a2) = Credit
+        # Col 3 = Balance (ignored for transaction amount)
         
-        debit_keywords = [
-            "transfer to", "withdrawal", "debit", "outward", "purchase", "airtime", 
-            "data", "web purchase", "pos", "ussd", "nip to", "trf to", "payment",
-            "bill", "utility", "loan", "fee", "charge", "vat", "levy", "tax"
-        ]
-        
-        is_credit = any(k in desc for k in credit_keywords)
-        is_debit = any(k in desc for k in debit_keywords)
-        
-        # Conflict resolution / Defaulting
-        if is_credit:
-            final = abs(val)
-        elif is_debit:
-            final = -abs(val)
+        if a1 > 0 and a2 == 0:
+            # Explicit Debit
+            final_amounts.append(-abs(a1))
+        elif a2 > 0 and a1 == 0:
+            # Explicit Credit
+            final_amounts.append(abs(a2))
         else:
-            # Ambiguous. 
-            # If description matches "Transfer from X to Y", it mentions both.
-            # But usually "Transfer from" comes first for credits.
-            # Default to Negative (Expense) is safer for risk scoring than assuming Income.
-            final = -abs(val)
-             
-        final_amounts.append(final)
+            # Ambiguous (e.g. both 0, or both > 0, or layout is different)
+            # Fallback to keyword matching
+            desc = row["description"].lower()
+            is_credit = any(x in desc for x in ["transfer from", "deposit", "credit", "inward", "nip from", "trf from", "fip", "topup"])
+            
+            # Use the largest non-zero value found
+            val = max(a1, a2)
+            if is_credit:
+                final_amounts.append(abs(val))
+            else:
+                final_amounts.append(-abs(val))
 
     df["amount"] = final_amounts
     df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
