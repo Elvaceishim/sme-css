@@ -25,30 +25,158 @@ def extract_transactions_from_pdf(pdf_file):
         valid_mask = df["date"].astype(str).str.contains(date_pat, regex=True, case=False, na=False)
         return valid_mask.sum()
 
-    # Strategy 1: Table extraction
+    # Strategy 1: Coordinate-based extraction (Most Robust for "DEBIT | CREDIT | BALANCE" headers)
+    df_coords = _extract_using_coordinates(pdf)
+    if df_coords is not None and len(df_coords) > 0:
+        df_coords_clean = _clean_extracted_df(df_coords)
+        if df_coords_clean is not None and len(df_coords_clean) > 0:
+            pdf.close()
+            return df_coords_clean, f"coordinate_extraction ({len(df_coords_clean)} rows)"
+
+    # Strategy 2: Table extraction
     df_tables = _extract_from_tables(pdf)
     df_tables_clean = _clean_extracted_df(df_tables) if df_tables is not None else None
     score_tables = count_valid_dates(df_tables_clean)
     
-    # Strategy 2: Text-based extraction (Regex)
+    # Strategy 3: Text-based extraction (Regex)
     df_text = _extract_from_text(pdf)
     df_text_clean = _clean_extracted_df(df_text) if df_text is not None else None
     score_text = count_valid_dates(df_text_clean)
     
-    # Choose the winner based on VALID dates, not just total rows
+    # Choose the winner based on VALID dates
     pdf.close()
     
     if score_tables == 0 and score_text == 0:
-        # Fallback: if neither produced valid dates, return the one with rows?
-        # Or just fail.
-        if df_tables_clean is not None and len(df_tables_clean) > 0:
-             return df_tables_clean, f"table_extraction (fallback, {len(df_tables_clean)} rows)"
         return None, "Could not extract any valid transactions. Please try CSV export."
         
-    if score_text >= score_tables:  # Prefer text if tie or better
-        return df_text_clean, f"text_extraction ({score_text} valid rows)"
+    if score_text >= score_tables:
+        return df_text_clean, f"text_extraction ({score_text} rows)"
     else:
-        return df_tables_clean, f"table_extraction ({score_tables} valid rows)"
+        return df_tables_clean, f"table_extraction ({score_tables} rows)"
+
+
+def _extract_using_coordinates(pdf):
+    """
+    Advanced extraction using X-coordinates of headers (DEBIT, CREDIT, BALANCE)
+    to strictly classify amounts without guessing.
+    """
+    rows = []
+    
+    for page in pdf.pages:
+        words = page.extract_words(keep_blank_chars=False)
+        
+        # 1. Find Header Headers
+        # We look for DEBIT, CREDIT, BALANCE
+        header_map = {} # {'debit': x_center, 'credit': x_center, 'balance': x_center}
+        
+        for w in words:
+            text = w['text'].lower().replace(":", "").replace(".", "")
+            if text in ['debit', 'dr']:
+                header_map['debit'] = (w['x0'] + w['x1']) / 2
+            elif text in ['credit', 'cr']:
+                header_map['credit'] = (w['x0'] + w['x1']) / 2
+            elif text == 'balance':
+                header_map['balance'] = (w['x0'] + w['x1']) / 2
+                
+        # Only proceed if we found at least Debit/Credit anchors
+        if 'debit' not in header_map or 'credit' not in header_map:
+            continue
+            
+        # Define Split Points
+        # Split between Debit and Credit
+        split_dc = (header_map['debit'] + header_map['credit']) / 2
+        # Split between Credit and Balance (if balance exists)
+        split_cb = (header_map['credit'] + header_map.get('balance', header_map['credit'] + 100)) / 2
+        
+        # 2. Group words by Row (Top coordinate)
+        # We'll use a tolerance of 3px to group words on the same line
+        lines = {} # top_key -> list of words
+        
+        for w in words:
+            # Round top to nearest 5 to group
+            y = int(w['top'] / 5) * 5
+            if y not in lines:
+                lines[y] = []
+            lines[y].append(w)
+            
+        # 3. Process Lines
+        sorted_ys = sorted(lines.keys())
+        
+        for y in sorted_ys:
+            line_words = sorted(lines[y], key=lambda x: x['x0'])
+            
+            # Reconstruct text line for date detection
+            full_text = " ".join([w['text'] for w in line_words])
+            
+            # Check for Date at start
+            # Regex: approx date match
+            import re
+            date_match = re.search(r'(?:\d{2}[-/]\d{2}[-/]\d{4}|\d{2}\s(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\s\d{4})', full_text, re.IGNORECASE)
+            
+            if not date_match:
+                continue
+                
+            primary_date = date_match.group(0)
+            
+            # Now finding amounts in this line
+            debit_val = 0.0
+            credit_val = 0.0
+            
+            desc_words = []
+            
+            for w in line_words:
+                txt = w['text'].replace(",", "")
+                # Is it a number?
+                try:
+                    # Check if it looks like a number (allow . for decimals)
+                    if re.match(r'^[\d,]+\.\d{2}$', w['text']):
+                        val = float(txt)
+                        center = (w['x0'] + w['x1']) / 2
+                        
+                        if center < split_dc:
+                            # It's in Debit territory (or Date territory? Date is usually far left)
+                            # But date regex excluded already.
+                            # Ensure it's right of the date? Date is usually at x < 100. Debit is x ~ 400.
+                            if center > header_map['debit'] - 100: 
+                                debit_val = val
+                        elif split_dc <= center < split_cb:
+                            credit_val = val
+                        else:
+                            pass # It's Balance
+                    else:
+                        desc_words.append(w['text'])
+                except:
+                    desc_words.append(w['text'])
+            
+            # Reconstruct Description (remove date and amounts logic is messy here, 
+            # so we just take non-number words)
+            description = " ".join(desc_words)
+            # Remove the date from description
+            description = description.replace(primary_date, "").strip()
+            
+            # Calculate final amount
+            amount = 0.0
+            type_ = "Debit"
+            
+            if credit_val > 0:
+                amount = credit_val
+                type_ = "Credit"
+            elif debit_val > 0:
+                amount = -debit_val
+                type_ = "Debit"
+                
+            if amount != 0:
+                rows.append({
+                    "date": primary_date,
+                    "description": description,
+                    "amount": amount,
+                    "type": type_
+                })
+                
+    if not rows:
+        return None
+        
+    return pd.DataFrame(rows)
 
 
 def _extract_from_tables(pdf):
