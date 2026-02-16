@@ -30,6 +30,8 @@ COLUMN_MAPPINGS = {
     "credit amount": "_credit",
     "deposits": "_credit",
     "deposit": "_credit",
+    "lodgement": "_credit",
+    "money in": "_credit",
     "credit(₦)": "_credit",
     "credit (₦)": "_credit",
     "credit(ngn)": "_credit",
@@ -37,6 +39,8 @@ COLUMN_MAPPINGS = {
     "debit amount": "_debit",
     "withdrawals": "_debit",
     "withdrawal": "_debit",
+    "money out": "_debit",
+    "payment": "_debit",
     "debit(₦)": "_debit",
     "debit (₦)": "_debit",
     "debit(ngn)": "_debit",
@@ -46,6 +50,11 @@ COLUMN_MAPPINGS = {
     "transaction type": "type",
     "txn type": "type",
     "dr/cr": "type",
+    
+    # Additional Description aliases
+    "beneficiary": "description",
+    "payer": "description",
+    "sender": "description",
 }
 
 DATE_FORMATS = [

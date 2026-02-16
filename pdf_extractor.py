@@ -71,11 +71,11 @@ def _extract_using_coordinates(pdf):
         
         for w in words:
             text = w['text'].lower().replace(":", "").replace(".", "")
-            if text in ['debit', 'dr']:
+            if text in ['debit', 'dr', 'withdrawal', 'payment', 'money out']:
                 header_map['debit'] = (w['x0'] + w['x1']) / 2
-            elif text in ['credit', 'cr']:
+            elif text in ['credit', 'cr', 'deposit', 'lodgement', 'money in']:
                 header_map['credit'] = (w['x0'] + w['x1']) / 2
-            elif text == 'balance':
+            elif text in ['balance', 'bal', 'book balance']:
                 header_map['balance'] = (w['x0'] + w['x1']) / 2
                 
         # Only proceed if we found at least Debit/Credit anchors
