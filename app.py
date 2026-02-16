@@ -35,6 +35,14 @@ if uploaded_file:
     
     cleaned_df, summary, warnings = validate_statement(raw_df)
 
+    # DEBUG: Help diagnose extraction issues
+    with st.expander("🔍 Debug: View Raw Extracted Data"):
+        st.write("First 10 rows of raw extraction:", raw_df.head(10))
+        if cleaned_df is not None:
+             st.write("First 10 rows of validated data:", cleaned_df.head(10))
+        else:
+             st.write("No valid data found.")
+
     if cleaned_df is None:
         for w in warnings:
             st.error(w)

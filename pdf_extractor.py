@@ -211,33 +211,45 @@ def _resolve_amount_columns(df):
     final_amounts = []
     
     for _, row in df.iterrows():
+        desc = row["description"].lower()
         a1 = row.get("amount_1_val", 0)
         a2 = row.get("amount_2_val", 0)
         
         # Logic: 
         # Col 1 (a1) = Debit
         # Col 2 (a2) = Credit
-        # Col 3 = Balance (ignored for transaction amount)
+        # Col 3 = Balance (ignored)
         
         if a1 > 0 and a2 == 0:
-            # Explicit Debit
+            # Explicit Debit (Col 1 present, Col 2 empty/placeholder)
             final_amounts.append(-abs(a1))
         elif a2 > 0 and a1 == 0:
-            # Explicit Credit
+            # Explicit Credit (Col 1 empty/placeholder, Col 2 present)
             final_amounts.append(abs(a2))
         else:
-            # Ambiguous (e.g. both 0, or both > 0, or layout is different)
-            # Fallback to keyword matching
-            desc = row["description"].lower()
-            is_credit = any(x in desc for x in ["transfer from", "deposit", "credit", "inward", "nip from", "trf from", "fip", "topup"])
+            # Ambiguous (e.g. missing placeholders, so we have 2 numbers: [Transaction, Balance])
+            # Strategy: Trust the FIRST number (a1) as the transaction amount.
+            # (Because Balance is usually the last number).
+            # Previous logic used max(a1, a2) which caused Inflation by picking Balance.
             
-            # Use the largest non-zero value found
-            val = max(a1, a2)
+            val = a1 
+            
+            # Keyword inference fallback
+            credit_keywords = [
+                "transfer from", "deposit", "credit", "inward", "nip from", "trf from", 
+                "fip", "ut", "dividend", "interest", "refund", "reversal", "topup", 
+                "received", "fbn mobile", "uba mobile", "access mobile", "gtb mobile",
+                "zenith mobile", "firstmobile", "alat", "opay", "loan", "disbursement"
+            ]
+            
+            is_credit = any(k in desc for k in credit_keywords)
+            
             if is_credit:
                 final_amounts.append(abs(val))
             else:
+                # Default to Expense if ambiguous
                 final_amounts.append(-abs(val))
-
+             
     df["amount"] = final_amounts
     df["type"] = df["amount"].apply(lambda x: "Credit" if x >= 0 else "Debit")
     
