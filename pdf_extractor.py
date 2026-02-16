@@ -25,13 +25,10 @@ def extract_transactions_from_pdf(pdf_file):
         valid_mask = df["date"].astype(str).str.contains(date_pat, regex=True, case=False, na=False)
         return valid_mask.sum()
 
-    # Strategy 1: Coordinate-based extraction (Most Robust for "DEBIT | CREDIT | BALANCE" headers)
+    # Strategy 1: Coordinate-based extraction
     df_coords = _extract_using_coordinates(pdf)
-    if df_coords is not None and len(df_coords) > 0:
-        df_coords_clean = _clean_extracted_df(df_coords)
-        if df_coords_clean is not None and len(df_coords_clean) > 0:
-            pdf.close()
-            return df_coords_clean, f"coordinate_extraction ({len(df_coords_clean)} rows)"
+    df_coords_clean = _clean_extracted_df(df_coords) if df_coords is not None else None
+    score_coords = count_valid_dates(df_coords_clean)
 
     # Strategy 2: Table extraction
     df_tables = _extract_from_tables(pdf)
@@ -43,13 +40,24 @@ def extract_transactions_from_pdf(pdf_file):
     df_text_clean = _clean_extracted_df(df_text) if df_text is not None else None
     score_text = count_valid_dates(df_text_clean)
     
-    # Choose the winner based on VALID dates
     pdf.close()
     
-    if score_tables == 0 and score_text == 0:
-        return None, "Could not extract any valid transactions. Please try CSV export."
+    # Select Winner
+    scores = {
+        "coordinate": score_coords,
+        "table": score_tables,
+        "text": score_text
+    }
+    
+    best_strategy = max(scores, key=scores.get)
+    best_score = scores[best_strategy]
+    
+    if best_score == 0:
+        return None, "Could not extract any valid transactions. Please check if the PDF is text-readable or try CSV export."
         
-    if score_text >= score_tables:
+    if best_strategy == "coordinate":
+        return df_coords_clean, f"coordinate_extraction ({score_coords} rows)"
+    elif best_strategy == "text":
         return df_text_clean, f"text_extraction ({score_text} rows)"
     else:
         return df_tables_clean, f"table_extraction ({score_tables} rows)"
@@ -57,30 +65,37 @@ def extract_transactions_from_pdf(pdf_file):
 
 def _extract_using_coordinates(pdf):
     """
-    Advanced extraction using X-coordinates of headers (DEBIT, CREDIT, BALANCE)
-    to strictly classify amounts without guessing.
+    Advanced extraction using X-coordinates of headers (DEBIT, CREDIT, BALANCE).
+    Persists headers across pages to handle multi-page statements.
     """
     rows = []
+    global_header_map = {} 
     
     for page in pdf.pages:
         words = page.extract_words(keep_blank_chars=False)
         
-        # 1. Find Header Headers
-        # We look for DEBIT, CREDIT, BALANCE
-        header_map = {} # {'debit': x_center, 'credit': x_center, 'balance': x_center}
+        # 1. Find Headers on THIS page
+        page_header_map = {} 
         
         for w in words:
             text = w['text'].lower().replace(":", "").replace(".", "")
             if text in ['debit', 'dr', 'withdrawal', 'payment', 'money out']:
-                header_map['debit'] = (w['x0'] + w['x1']) / 2
+                page_header_map['debit'] = (w['x0'] + w['x1']) / 2
             elif text in ['credit', 'cr', 'deposit', 'lodgement', 'money in']:
-                header_map['credit'] = (w['x0'] + w['x1']) / 2
+                page_header_map['credit'] = (w['x0'] + w['x1']) / 2
             elif text in ['balance', 'bal', 'book balance']:
-                header_map['balance'] = (w['x0'] + w['x1']) / 2
-                
-        # Only proceed if we found at least Debit/Credit anchors
-        if 'debit' not in header_map or 'credit' not in header_map:
+                page_header_map['balance'] = (w['x0'] + w['x1']) / 2
+        
+        # Update global map if we found new headers
+        if 'debit' in page_header_map and 'credit' in page_header_map:
+            global_header_map = page_header_map
+            
+        # If we don't have a map yet (and didn't find one), skip this page
+        if 'debit' not in global_header_map or 'credit' not in global_header_map:
             continue
+            
+        # Use the active map
+        header_map = global_header_map
             
         # Define Split Points
         # Split between Debit and Credit
@@ -93,6 +108,9 @@ def _extract_using_coordinates(pdf):
         lines = {} # top_key -> list of words
         
         for w in words:
+            # Check if word is below the headers (avoid reprocessing headers)
+            # Find min Y of headers? A bit complex. Just identifying numbers usually filters headers.
+            
             # Round top to nearest 5 to group
             y = int(w['top'] / 5) * 5
             if y not in lines:
