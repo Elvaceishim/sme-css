@@ -141,6 +141,89 @@ if uploaded_file:
         st.dataframe(categorized_df[display_cols], use_container_width=True, height=400)
 
     st.divider()
+
+    # ── ML Anomaly Detection ──
+    st.subheader("Statistical Outlier Detection")
+    st.caption("Transactions flagged by Unsupervised Machine Learning (Isolation Forest) as unusual patterns.")
+    
+    with st.spinner("Running ML Anomaly Detection..."):
+        try:
+            from anomaly_detector import detect_anomalies
+            anomalies = detect_anomalies(cleaned_df)
+            
+            if not anomalies.empty:
+                st.warning(f"⚠️ MLAgent found {len(anomalies)} statistical anomalies.")
+                st.dataframe(anomalies.head(10), use_container_width=True)
+            else:
+                st.success("✅ No statistical anomalies detected.")
+        except ImportError:
+            st.error("ML Library not found. Please install scikit-learn.")
+        except Exception as e:
+            st.error(f"Anomaly Detection Failed: {e}")
+
+    st.divider()
+
+    # ── ML Forecasting ──
+    st.subheader("🔮 30-Day Cash Flow Forecast")
+    st.caption("Linear Regression Projection based on daily net position trend.")
+    
+    with st.spinner("Calculating Forecast..."):
+        try:
+            from forecasting import forecast_balance
+            hist, pred = forecast_balance(cleaned_df)
+            
+            if not hist.empty and not pred.empty:
+                # Combine for plotting but keep separate traces for color
+                # Create Plotly Graph
+                fig_forecast = go.Figure()
+                
+                # Historical
+                fig_forecast.add_trace(go.Scatter(
+                    x=hist['date'], 
+                    y=hist['cumulative_balance'],
+                    mode='lines+markers',
+                    name='Historical Balance',
+                    line=dict(color='blue')
+                ))
+                
+                # Projection
+                fig_forecast.add_trace(go.Scatter(
+                    x=pred['date'], 
+                    y=pred['cumulative_balance'],
+                    mode='lines+markers',
+                    name='Projected Trend',
+                    line=dict(color='green', dash='dash')
+                ))
+                
+                fig_forecast.update_layout(
+                    title="projected Cash Position (Next 30 Days)",
+                    xaxis_title="Date",
+                    yaxis_title="Balance (Proxy)",
+                    template="plotly_white"
+                )
+                
+                st.plotly_chart(fig_forecast, use_container_width=True)
+                
+                with st.expander("🔍 Debug: View Forecast Data"):
+                    st.write("Historical Data:", hist)
+                    st.write("Predicted Data:", pred)
+                
+                # Insight text
+                start_bal = hist['cumulative_balance'].iloc[-1]
+                end_bal = pred['cumulative_balance'].iloc[-1]
+                delta = end_bal - start_bal
+                trend_color = "green" if delta >= 0 else "red"
+                trend_arrow = "📈" if delta >= 0 else "📉"
+                
+                st.markdown(f"**Insight:** Based on current trends, your balance is projected to change by :{trend_color}[**₦{delta:,.2f}**] over the next 30 days {trend_arrow}.")
+                
+            else:
+                st.info("Not enough data history to forecast trends (need at least 2 days).")
+                
+        except Exception as e:
+            st.error(f"Forecasting Failed: {e}")
+
+    st.divider()
     st.subheader("AI Underwriter's Credit Memo")
 
     # Save categorized data for memo generator
