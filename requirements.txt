@@ -4,4 +4,5 @@ plotly
 openai
 python-dotenv
 fpdf2
-pdfplumberscikit-learn==1.8.0
+pdfplumber
+scikit-learn
